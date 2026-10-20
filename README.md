@@ -1,4 +1,4 @@
-# Trusted Data Contracts
+# Governance as Code with ODCS Data Contracts
 
 [![Contract CI](https://github.com/hakigreg/odcs-governance-as-code/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/hakigreg/odcs-governance-as-code/actions/workflows/ci.yaml)
 ![ODCS](https://img.shields.io/badge/ODCS-3.2.0-0052CC)
@@ -20,9 +20,18 @@ delivery and operation.
 This project demonstrates how ODCS data contracts can turn those governance
 requirements into executable controls.
 
+## What this project demonstrates
+
+| Control | Implementation | Evidence |
+| --- | --- | --- |
+| ODCS conformance | [`scripts/lint_contracts.py`](scripts/lint_contracts.py) | [`Contract CI`](.github/workflows/ci.yaml) |
+| Governance policy | [`scripts/check_governance.py`](scripts/check_governance.py) | [`Contract CI`](.github/workflows/ci.yaml) |
+| Contract compatibility | [`scripts/check_compatibility.py`](scripts/check_compatibility.py) | [Breaking-change demonstration](docs/compatibility.md) |
+| Runtime data quality | PostgreSQL and Data Contract CLI | [Runtime scenarios](docs/runtime-validation.md) |
+
 ## MVP
 
-The MVP will contain three connected data contracts:
+The MVP contains three connected data contracts:
 
 1. `telecom_cdr_events` — pseudonymous telecom activity produced by the Telecom domain.
 2. `customer_behavior_features` — aggregated features produced by the Data Platform domain.
@@ -202,11 +211,13 @@ See the [minimum viable governance policy](docs/governance-policy.md).
 
 ## Status
 
-MVP implemented locally: all three contract boundaries, runtime demonstrations,
-breaking-change detection, lifecycle documentation, and CI are in place.
+The MVP is implemented and continuously validated on GitHub: all three contract
+boundaries, runtime demonstrations, breaking-change detection, lifecycle
+documentation, and CI are in place.
 
 ## Disclaimer
 
 This repository uses synthetic data and simplified policies for educational and
-portfolio purposes. It does not constitute legal, regulatory, credit, or risk
-management advice.
+portfolio purposes. All organizations, domains, owners, and `example.com`
+contact addresses are fictitious. It does not constitute legal, regulatory,
+credit, or risk management advice.
