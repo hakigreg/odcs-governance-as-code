@@ -1,0 +1,54 @@
+name: Contract CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contract-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gates:
+    name: Static and contract gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Show Docker environment
+        run: docker compose version
+
+      - name: Build reproducible tooling image
+        run: make bootstrap
+
+      - name: Run lint, ODCS, governance, compatibility, and unit tests
+        run: make check
+
+  runtime-contracts:
+    name: Runtime contract scenarios
+    needs: quality-gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Build reproducible tooling image
+        run: make bootstrap
+
+      - name: Verify green and expected-failure scenarios
+        run: make ci-runtime
+
+      - name: Stop services
+        if: always()
+        run: docker compose down --volumes

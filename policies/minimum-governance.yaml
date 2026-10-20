@@ -1,0 +1,53 @@
+id: minimum-viable-governance
+version: 1.0.0
+description: >
+  Minimum organizational controls required before an ODCS contract can be
+  accepted as a governed interface in this reference implementation.
+
+requiredDescriptionFields:
+  - purpose
+  - usage
+  - limitations
+
+requiredTeamRoles:
+  - Owner
+  - Data Steward
+
+requiredSlaProperties:
+  - freshness
+  - frequency
+  - retention
+
+sensitiveClassifications:
+  - confidential
+  - restricted
+
+highImpactGovernanceTiers:
+  - high-impact-source
+  - high-impact-derived
+  - high-impact-decision
+
+derivedGovernanceTiers:
+  - high-impact-derived
+  - high-impact-decision
+
+decisionGovernanceTiers:
+  - high-impact-decision
+
+requiredDecisionProperties:
+  - feature_version
+  - model_id
+  - model_version
+  - risk_score
+  - primary_reason_code
+  - human_review_status
+  - decision_outcome
+
+forbiddenServerKeys:
+  - username
+  - user
+  - password
+  - token
+  - secret
+  - apiKey
+  - privateKey

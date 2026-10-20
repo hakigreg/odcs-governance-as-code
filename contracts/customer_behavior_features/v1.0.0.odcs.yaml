@@ -1,0 +1,380 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: urn:odcs:data-platform:customer-behavior-features
+name: customer_behavior_features
+version: 1.0.0
+status: active
+domain: data-platform
+dataProduct: trusted-credit-signals
+contractCreatedTs: "2026-10-19T00:00:00-03:00"
+
+description:
+  purpose: >
+    Provide governed, reproducible behavioral features derived from
+    pseudonymous telecom events for credit-risk research and model pipelines.
+  usage: >
+    Join features to an authorized modeling population by subscriber_id_hash
+    and use only complete 30-day observation windows. Consumers must record the
+    feature_version used by every experiment or decision pipeline.
+  limitations: >
+    The features are behavioral proxies, not evidence of income, identity,
+    intent, or creditworthiness. Sparse activity and network coverage may
+    affect representativeness. They must not be used as the sole basis for an
+    adverse decision.
+
+context:
+  instructions: >
+    Treat each row as one subscriber-level feature snapshot for a closed
+    30-day window [feature_window_start, feature_window_end). Use only the
+    documented measures and preserve feature_version in downstream lineage.
+  verifiedStatements:
+    - id: feature-granularity
+      question: What does one row represent?
+      answer: One pseudonymous subscriber and one closed 30-day feature window.
+    - id: declared-source
+      question: Which governed input produces these features?
+      answer: telecom_cdr_events contract urn:odcs:telecom:telecom-cdr-events version 1.0.0.
+    - id: transformation-boundary
+      question: Does this contract contain raw event histories?
+      answer: No. It contains only windowed aggregate measures.
+  constraints:
+    - id: no-reidentification
+      constraint: Do not reverse, enrich, or link subscriber_id_hash to a natural person.
+      tags: [privacy, pseudonymization]
+    - id: no-individual-activity-inference
+      constraint: Do not infer or reconstruct individual calls, messages, locations, or sessions.
+      tags: [privacy, aggregation]
+    - id: no-sole-adverse-decision
+      constraint: Do not use these features as the sole basis for an adverse credit decision.
+      tags: [high-impact, human-oversight]
+
+team:
+  name: data-platform-feature-team
+  description: Accountable team for the governed feature engineering boundary.
+  members:
+    - username: feature-product-owner
+      role: Owner
+      description: Accountable for feature purpose, access, and lifecycle decisions.
+    - username: feature-data-steward
+      role: Data Steward
+      description: Maintains definitions, classifications, lineage, and quality expectations.
+    - username: feature-platform-engineer
+      role: Technical Owner
+      description: Operates feature computation and resolves contract incidents.
+
+servers:
+  - server: local
+    type: postgres
+    host: ${POSTGRES_HOST:-postgres}
+    port: ${POSTGRES_PORT:-5432}
+    database: ${POSTGRES_DB:-contracts}
+    schema: analytics
+
+schema:
+  - id: customer-behavior-features-object
+    name: customer_behavior_features
+    physicalName: customer_behavior_features
+    physicalType: table
+    businessName: Customer behavior features
+    description: Reproducible 30-day aggregate features derived from governed telecom events.
+    dataGranularityDescription: One row per pseudonymous subscriber, window end, and feature version.
+    tags: [behavioral-features, derived, pseudonymous, credit-risk]
+    context:
+      instructions: >
+        Join only on subscriber_id_hash. Filter by feature_window_end and
+        feature_version so that training and scoring use point-in-time-correct,
+        reproducible feature snapshots.
+      constraints:
+        - id: minimum-aggregation-window
+          constraint: Features must use a complete 30-day observation window.
+          tags: [privacy, reproducibility]
+    properties:
+      - id: feature-subscriber-id-hash
+        name: subscriber_id_hash
+        businessName: Pseudonymous subscriber identifier
+        description: One-way SHA-256 hash used to associate a feature snapshot with an authorized subject.
+        semanticType: dimension
+        logicalType: string
+        physicalType: char(64)
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        criticalDataElement: true
+        classification: restricted
+        tags: [pseudonymous, sensitive, join-key]
+        transformSourceObjects: [telecom_cdr_events]
+        transformLogic: subscriber_id_hash
+        quality:
+          - id: feature-subscriber-id-complete
+            type: library
+            metric: nullValues
+            mustBe: 0
+            dimension: completeness
+            severity: error
+            description: Every feature snapshot must identify its pseudonymous subscriber.
+          - id: feature-subscriber-id-shape
+            type: sql
+            query: >
+              SELECT COUNT(*) FROM customer_behavior_features
+              WHERE subscriber_id_hash !~ '^[0-9a-f]{64}$'
+            mustBe: 0
+            dimension: conformity
+            severity: error
+            description: Subscriber identifiers must be lowercase SHA-256 hexadecimal strings.
+
+      - id: feature-window-start
+        name: feature_window_start
+        businessName: Feature window start
+        description: Inclusive UTC boundary of the 30-day observation window.
+        semanticType: dimension
+        logicalType: timestamp
+        physicalType: timestamptz
+        required: true
+        criticalDataElement: true
+        classification: internal
+        transformSourceObjects: [telecom_cdr_events]
+        transformLogic: feature_window_end - INTERVAL '30 days'
+        quality:
+          - id: feature-window-start-complete
+            type: library
+            metric: nullValues
+            mustBe: 0
+            dimension: completeness
+            severity: error
+            description: Every snapshot must declare the beginning of its observation window.
+
+      - id: feature-window-end
+        name: feature_window_end
+        businessName: Feature window end
+        description: Exclusive UTC boundary of the 30-day observation window.
+        semanticType: dimension
+        logicalType: timestamp
+        physicalType: timestamptz
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        criticalDataElement: true
+        classification: internal
+        transformSourceObjects: [telecom_cdr_events]
+        transformLogic: Daily UTC feature snapshot boundary supplied by the orchestrator.
+        quality:
+          - id: feature-window-end-complete
+            type: library
+            metric: nullValues
+            mustBe: 0
+            dimension: completeness
+            severity: error
+            description: Every snapshot must declare the end of its observation window.
+
+      - id: feature-version
+        name: feature_version
+        businessName: Feature definition version
+        description: Immutable semantic version of the transformation definitions used for the snapshot.
+        semanticType: dimension
+        logicalType: string
+        physicalType: varchar(20)
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        classification: internal
+        transformLogic: Constant '1.0.0' for this contract version.
+
+      - id: observation-days
+        name: observation_days
+        businessName: Observation days
+        description: Number of calendar days covered by the feature window.
+        semanticType: measure
+        logicalType: integer
+        physicalType: integer
+        required: true
+        classification: internal
+        transformSourceObjects: [telecom_cdr_events]
+        transformLogic: DATE_PART('day', feature_window_end - feature_window_start)
+
+      - id: active-days
+        name: active_days
+        businessName: Active days
+        description: Number of distinct UTC dates containing at least one telecom event.
+        semanticType: measure
+        logicalType: integer
+        physicalType: integer
+        required: true
+        classification: internal
+        transformSourceObjects: [telecom_cdr_events]
+        transformLogic: COUNT(DISTINCT DATE(event_timestamp))
+
+      - id: total-events
+        name: total_events
+        businessName: Total telecom events
+        description: Count of all governed telecom events observed in the feature window.
+        semanticType: measure
+        logicalType: integer
+        physicalType: bigint
+        required: true
+        classification: internal
+        transformSourceObjects: [telecom_cdr_events]
+        transformLogic: COUNT(*)
+
+      - id: outgoing-call-count
+        name: outgoing_call_count
+        businessName: Outgoing call count
+        description: Count of outbound voice calls in the feature window.
+        semanticType: measure
+        logicalType: integer
+        physicalType: bigint
+        required: true
+        classification: internal
+        transformSourceObjects: [telecom_cdr_events]
+        transformLogic: COUNT(*) FILTER (WHERE event_type = 'call' AND direction = 'outbound')
+
+      - id: total-call-duration-seconds
+        name: total_call_duration_seconds
+        businessName: Total call duration
+        description: Sum of call duration in seconds over the feature window.
+        semanticType: measure
+        logicalType: integer
+        physicalType: bigint
+        required: true
+        classification: internal
+        transformSourceObjects: [telecom_cdr_events]
+        transformLogic: SUM(duration_seconds) FILTER (WHERE event_type = 'call')
+
+      - id: total-data-volume-mb
+        name: total_data_volume_mb
+        businessName: Total data volume
+        description: Sum of data-session volume in megabytes over the feature window.
+        semanticType: measure
+        logicalType: number
+        physicalType: numeric(18,3)
+        required: true
+        classification: internal
+        transformSourceObjects: [telecom_cdr_events]
+        transformLogic: SUM(data_volume_mb) FILTER (WHERE event_type = 'data')
+
+      - id: mobility-region-count
+        name: mobility_region_count
+        businessName: Distinct network regions
+        description: Count of distinct coarse network regions observed during the window.
+        semanticType: measure
+        logicalType: integer
+        physicalType: integer
+        required: true
+        classification: confidential
+        tags: [mobility, sensitive, aggregated]
+        transformSourceObjects: [telecom_cdr_events]
+        transformLogic: COUNT(DISTINCT cell_region_code)
+
+      - id: feature-computed-at
+        name: computed_at
+        businessName: Feature computation timestamp
+        description: UTC timestamp at which the feature snapshot completed successfully.
+        logicalType: timestamp
+        physicalType: timestamptz
+        required: true
+        classification: internal
+
+    quality:
+      - id: feature-positive-row-count
+        type: library
+        metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        severity: error
+        description: A feature delivery must contain at least one snapshot.
+      - id: feature-composite-key-unique
+        type: sql
+        query: >
+          SELECT COUNT(*) FROM (
+            SELECT subscriber_id_hash, feature_window_end, feature_version
+            FROM customer_behavior_features
+            GROUP BY subscriber_id_hash, feature_window_end, feature_version
+            HAVING COUNT(*) > 1
+          ) duplicates
+        mustBe: 0
+        dimension: uniqueness
+        severity: error
+        description: A subscriber can have only one snapshot per window end and feature version.
+      - id: feature-window-is-30-days
+        type: sql
+        query: >
+          SELECT COUNT(*) FROM customer_behavior_features
+          WHERE feature_window_end - feature_window_start <> INTERVAL '30 days'
+             OR observation_days <> 30
+        mustBe: 0
+        dimension: consistency
+        severity: error
+        description: Every feature snapshot must cover exactly 30 days.
+      - id: feature-measures-non-negative
+        type: sql
+        query: >
+          SELECT COUNT(*) FROM customer_behavior_features
+          WHERE active_days < 0
+             OR total_events < 0
+             OR outgoing_call_count < 0
+             OR total_call_duration_seconds < 0
+             OR total_data_volume_mb < 0
+             OR mobility_region_count < 0
+        mustBe: 0
+        dimension: conformity
+        severity: error
+        description: Aggregate feature measures cannot be negative.
+      - id: feature-active-days-bounded
+        type: sql
+        query: >
+          SELECT COUNT(*) FROM customer_behavior_features
+          WHERE active_days > observation_days
+        mustBe: 0
+        dimension: consistency
+        severity: error
+        description: Active days cannot exceed the observation window.
+
+slaProperties:
+  - property: freshness
+    value: 30
+    unit: h
+    element: customer_behavior_features.computed_at
+    driver: operational
+    description: A complete daily snapshot must be available within 30 hours of its window end.
+  - property: frequency
+    value: 1
+    unit: d
+    element: customer_behavior_features.computed_at
+    driver: operational
+    description: The producer computes one feature snapshot per day.
+  - property: retention
+    value: 365
+    unit: d
+    element: customer_behavior_features.feature_window_end
+    driver: auditability
+    description: Feature snapshots are retained for one year to support reproducibility and monitoring.
+
+roles:
+  - role: risk-feature-consumer
+    access: read
+    firstLevelApprovers: feature-product-owner
+    secondLevelApprovers: model-risk-owner
+  - role: feature-platform-engineer
+    access: write
+    firstLevelApprovers: feature-product-owner
+
+support:
+  - channel: feature-contracts@example.com
+    tool: email
+    scope: issues
+    url: mailto:feature-contracts@example.com
+
+tags: [behavioral-features, regulated-ai, lineage, odcs-3-2]
+
+customProperties:
+  - property: governanceTier
+    value: high-impact-derived
+    vendor: vektoria
+  - property: sourceContractId
+    value: urn:odcs:telecom:telecom-cdr-events
+    vendor: vektoria
+  - property: sourceContractVersion
+    value: 1.0.0
+    vendor: vektoria
+  - property: syntheticDataOnly
+    value: true
+    vendor: vektoria

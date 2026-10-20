@@ -1,0 +1,485 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: urn:odcs:risk-analytics:credit-risk-decisions
+name: credit_risk_decisions
+version: 1.0.0
+status: active
+domain: risk-analytics
+dataProduct: trusted-credit-signals
+contractCreatedTs: "2026-10-19T00:00:00-03:00"
+
+description:
+  purpose: >
+    Provide an auditable record of model-assisted credit-risk decisions,
+    including the exact feature and model versions, explanation, human-review
+    state, and final outcome.
+  usage: >
+    Use this dataset for decision audit, model monitoring, outcome reporting,
+    and controlled investigation by authorized risk and compliance roles.
+    Reconstruct a decision only with the recorded point-in-time lineage.
+  limitations: >
+    Model scores and recommendations are decision-support signals, not facts
+    about a person. This contract does not authorize automated adverse action,
+    replace applicable notices, or establish legal or regulatory compliance.
+
+context:
+  instructions: >
+    Treat each row as one immutable evaluation of a pseudonymous application.
+    Use feature_version, feature_window_end, model_id, and model_version
+    together when reproducing an evaluation. A declined final outcome is valid
+    only after human_review_status is completed.
+  verifiedStatements:
+    - id: decision-granularity
+      question: What does one row represent?
+      answer: One immutable model-assisted evaluation for one pseudonymous application.
+    - id: declared-feature-source
+      question: Which governed feature interface supplied the model inputs?
+      answer: customer_behavior_features contract urn:odcs:data-platform:customer-behavior-features version 1.0.0.
+    - id: recommendation-boundary
+      question: Is the model recommendation the final decision?
+      answer: No. decision_outcome records the final controlled-process outcome separately.
+  constraints:
+    - id: no-automated-adverse-action
+      constraint: A model recommendation must never produce a declined outcome without completed human review.
+      tags: [human-oversight, adverse-action]
+    - id: no-reidentification
+      constraint: Do not reverse or enrich application_id_hash or subscriber_id_hash to identify a natural person.
+      tags: [privacy, pseudonymization]
+    - id: authorized-audit-use
+      constraint: Expose decision records only to approved risk, audit, compliance, and operations roles.
+      tags: [access-control, purpose-limitation]
+    - id: explanation-required
+      constraint: Every model-assisted evaluation must include a governed primary reason code.
+      tags: [explainability, auditability]
+
+team:
+  name: risk-decision-governance
+  description: Accountable team for the model-assisted decision interface and its controls.
+  members:
+    - username: credit-risk-owner
+      role: Owner
+      description: Accountable for decision purpose, policy, access, and lifecycle.
+    - username: model-risk-steward
+      role: Data Steward
+      description: Maintains definitions, lineage, explanation codes, and control evidence.
+    - username: decision-platform-engineer
+      role: Technical Owner
+      description: Operates decision recording and resolves contract incidents.
+
+servers:
+  - server: local
+    type: postgres
+    host: ${POSTGRES_HOST:-postgres}
+    port: ${POSTGRES_PORT:-5432}
+    database: ${POSTGRES_DB:-contracts}
+    schema: risk
+
+schema:
+  - id: credit-risk-decisions-object
+    name: credit_risk_decisions
+    physicalName: credit_risk_decisions
+    physicalType: table
+    businessName: Credit risk decisions
+    description: Auditable model-assisted evaluations and controlled-process outcomes.
+    dataGranularityDescription: One immutable row per application evaluation.
+    tags: [credit-risk, decision-record, explainability, human-oversight]
+    context:
+      instructions: >
+        Never overwrite a decision row. A reevaluation creates a new decision_id.
+        Keep model recommendation and final outcome distinct in every consumer.
+      constraints:
+        - id: append-only-decision-log
+          constraint: Decision records are append-only and corrections require a linked new evaluation.
+          tags: [auditability, immutability]
+    properties:
+      - id: decision-id
+        name: decision_id
+        businessName: Decision identifier
+        description: Immutable identifier assigned to one application evaluation.
+        semanticType: dimension
+        logicalType: string
+        physicalType: uuid
+        required: true
+        unique: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        criticalDataElement: true
+        classification: internal
+        quality:
+          - id: decision-id-complete
+            type: library
+            metric: nullValues
+            mustBe: 0
+            dimension: completeness
+            severity: error
+            description: Every evaluation must have a decision identifier.
+          - id: decision-id-unique
+            type: library
+            metric: duplicateValues
+            mustBe: 0
+            dimension: uniqueness
+            severity: error
+            description: Decision identifiers must not be duplicated.
+
+      - id: application-id-hash
+        name: application_id_hash
+        businessName: Pseudonymous application identifier
+        description: One-way SHA-256 hash that links the evaluation to an authorized application record.
+        semanticType: dimension
+        logicalType: string
+        physicalType: char(64)
+        required: true
+        criticalDataElement: true
+        classification: restricted
+        tags: [pseudonymous, sensitive, application-link]
+        quality:
+          - id: application-id-complete
+            type: library
+            metric: nullValues
+            mustBe: 0
+            dimension: completeness
+            severity: error
+            description: Every evaluation must identify its pseudonymous application.
+          - id: application-id-shape
+            type: sql
+            query: >
+              SELECT COUNT(*) FROM credit_risk_decisions
+              WHERE application_id_hash !~ '^[0-9a-f]{64}$'
+            mustBe: 0
+            dimension: conformity
+            severity: error
+            description: Application identifiers must be lowercase SHA-256 hexadecimal strings.
+
+      - id: decision-subscriber-id-hash
+        name: subscriber_id_hash
+        businessName: Pseudonymous subscriber identifier
+        description: Governed join key identifying the feature snapshot used by the evaluation.
+        semanticType: dimension
+        logicalType: string
+        physicalType: char(64)
+        required: true
+        classification: restricted
+        tags: [pseudonymous, sensitive, feature-lineage]
+        transformSourceObjects: [customer_behavior_features]
+        transformLogic: subscriber_id_hash
+
+      - id: decision-timestamp
+        name: decision_timestamp
+        businessName: Decision timestamp
+        description: UTC timestamp at which the controlled decision process completed.
+        semanticType: dimension
+        logicalType: timestamp
+        physicalType: timestamptz
+        required: true
+        criticalDataElement: true
+        classification: confidential
+        tags: [decision-record, sensitive]
+        quality:
+          - id: decision-timestamp-complete
+            type: library
+            metric: nullValues
+            mustBe: 0
+            dimension: completeness
+            severity: error
+            description: Every evaluation must record when the decision completed.
+
+      - id: decision-feature-window-end
+        name: feature_window_end
+        businessName: Feature snapshot window end
+        description: Point-in-time feature snapshot boundary used for model inference.
+        semanticType: dimension
+        logicalType: timestamp
+        physicalType: timestamptz
+        required: true
+        classification: internal
+        transformSourceObjects: [customer_behavior_features]
+        transformLogic: feature_window_end
+
+      - id: decision-feature-version
+        name: feature_version
+        businessName: Feature definition version
+        description: Semantic version of the governed feature definitions used by the model.
+        semanticType: dimension
+        logicalType: string
+        physicalType: varchar(20)
+        required: true
+        criticalDataElement: true
+        classification: internal
+        transformSourceObjects: [customer_behavior_features]
+        transformLogic: feature_version
+        quality:
+          - id: decision-feature-version-complete
+            type: library
+            metric: nullValues
+            mustBe: 0
+            dimension: completeness
+            severity: error
+            description: Every evaluation must record its feature definition version.
+
+      - id: model-id
+        name: model_id
+        businessName: Model identifier
+        description: Stable identifier of the governed model that produced the recommendation.
+        semanticType: dimension
+        logicalType: string
+        physicalType: varchar(100)
+        required: true
+        criticalDataElement: true
+        classification: internal
+        quality:
+          - id: model-id-complete
+            type: library
+            metric: nullValues
+            mustBe: 0
+            dimension: completeness
+            severity: error
+            description: Every evaluation must identify its model.
+
+      - id: model-version
+        name: model_version
+        businessName: Model version
+        description: Immutable version of the model artifact used for inference.
+        semanticType: dimension
+        logicalType: string
+        physicalType: varchar(30)
+        required: true
+        criticalDataElement: true
+        classification: internal
+        quality:
+          - id: model-version-complete
+            type: library
+            metric: nullValues
+            mustBe: 0
+            dimension: completeness
+            severity: error
+            description: Every evaluation must record its model version.
+
+      - id: risk-score
+        name: risk_score
+        businessName: Model risk score
+        description: Model output between zero and one, where a higher value indicates higher estimated risk.
+        semanticType: measure
+        logicalType: number
+        physicalType: numeric(6,5)
+        required: true
+        criticalDataElement: true
+        classification: confidential
+        tags: [model-output, sensitive, high-impact]
+        transformSourceObjects: [customer_behavior_features]
+        transformLogic: Governed model inference using the recorded feature and model versions.
+        quality:
+          - id: risk-score-range
+            type: sql
+            query: >
+              SELECT COUNT(*) FROM credit_risk_decisions
+              WHERE risk_score < 0 OR risk_score > 1
+            mustBe: 0
+            dimension: conformity
+            severity: error
+            description: Risk scores must remain within the documented zero-to-one interval.
+
+      - id: risk-band
+        name: risk_band
+        businessName: Risk band
+        description: Governed categorical interpretation of the model risk score.
+        semanticType: dimension
+        logicalType: string
+        physicalType: varchar(10)
+        required: true
+        classification: confidential
+        tags: [model-output, sensitive, high-impact]
+        enum:
+          - value: low
+          - value: medium
+          - value: high
+
+      - id: model-recommendation
+        name: model_recommendation
+        businessName: Model recommendation
+        description: Non-binding action candidate produced from the governed risk band.
+        semanticType: dimension
+        logicalType: string
+        physicalType: varchar(30)
+        required: true
+        classification: confidential
+        tags: [model-output, sensitive, human-review]
+        enum:
+          - value: approve_candidate
+          - value: manual_review
+          - value: decline_candidate
+
+      - id: primary-reason-code
+        name: primary_reason_code
+        businessName: Primary explanation reason
+        description: Governed code describing the principal factor behind the model recommendation.
+        semanticType: dimension
+        logicalType: string
+        physicalType: varchar(40)
+        required: true
+        classification: confidential
+        tags: [explainability, sensitive, adverse-action]
+        enum:
+          - value: favorable_activity
+          - value: insufficient_activity
+          - value: limited_history
+          - value: unstable_usage
+          - value: elevated_risk_signal
+          - value: manual_policy_check
+
+      - id: human-review-status
+        name: human_review_status
+        businessName: Human review status
+        description: State of the independent review required by decision policy.
+        semanticType: dimension
+        logicalType: string
+        physicalType: varchar(20)
+        required: true
+        classification: confidential
+        tags: [human-oversight, sensitive, control-evidence]
+        enum:
+          - value: not_required
+          - value: pending
+          - value: completed
+
+      - id: decision-outcome
+        name: decision_outcome
+        businessName: Final decision outcome
+        description: Outcome produced by the controlled decision process, distinct from model recommendation.
+        semanticType: dimension
+        logicalType: string
+        physicalType: varchar(20)
+        required: true
+        criticalDataElement: true
+        classification: confidential
+        tags: [decision-record, sensitive, high-impact]
+        enum:
+          - value: approved
+          - value: referred
+          - value: declined
+        quality:
+          - id: decision-outcome-complete
+            type: library
+            metric: nullValues
+            mustBe: 0
+            dimension: completeness
+            severity: error
+            description: Every evaluation must record its final controlled-process outcome.
+
+      - id: decision-recorded-at
+        name: recorded_at
+        businessName: Decision record timestamp
+        description: UTC timestamp at which the immutable decision record became available.
+        logicalType: timestamp
+        physicalType: timestamptz
+        required: true
+        classification: internal
+
+    quality:
+      - id: decision-positive-row-count
+        type: library
+        metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        severity: error
+        description: A decision delivery must contain at least one evaluation.
+      - id: decision-feature-is-point-in-time-correct
+        type: sql
+        query: >
+          SELECT COUNT(*) FROM credit_risk_decisions
+          WHERE feature_window_end > decision_timestamp
+        mustBe: 0
+        dimension: consistency
+        severity: error
+        description: A decision cannot use a feature snapshot from its future.
+      - id: decision-risk-band-consistent
+        type: sql
+        query: >
+          SELECT COUNT(*) FROM credit_risk_decisions
+          WHERE (risk_score < 0.35 AND risk_band <> 'low')
+             OR (risk_score >= 0.35 AND risk_score < 0.70 AND risk_band <> 'medium')
+             OR (risk_score >= 0.70 AND risk_band <> 'high')
+        mustBe: 0
+        dimension: consistency
+        severity: error
+        description: Risk bands must match the documented score thresholds.
+      - id: decision-recommendation-consistent
+        type: sql
+        query: >
+          SELECT COUNT(*) FROM credit_risk_decisions
+          WHERE (risk_band = 'low' AND model_recommendation <> 'approve_candidate')
+             OR (risk_band = 'medium' AND model_recommendation <> 'manual_review')
+             OR (risk_band = 'high' AND model_recommendation <> 'decline_candidate')
+        mustBe: 0
+        dimension: consistency
+        severity: error
+        description: Model recommendations must match the governed risk-band mapping.
+      - id: adverse-decision-human-review-complete
+        type: sql
+        query: >
+          SELECT COUNT(*) FROM credit_risk_decisions
+          WHERE decision_outcome = 'declined'
+            AND human_review_status <> 'completed'
+        mustBe: 0
+        dimension: conformity
+        severity: error
+        description: Declined outcomes require completed human review.
+      - id: decision-recorded-after-completion
+        type: sql
+        query: >
+          SELECT COUNT(*) FROM credit_risk_decisions
+          WHERE recorded_at < decision_timestamp
+        mustBe: 0
+        dimension: consistency
+        severity: error
+        description: A decision record cannot be available before the decision completes.
+
+slaProperties:
+  - property: freshness
+    value: 1
+    unit: h
+    element: credit_risk_decisions.recorded_at
+    driver: operational
+    description: Completed decision records must be available within one hour.
+  - property: frequency
+    value: 1
+    unit: h
+    element: credit_risk_decisions.recorded_at
+    driver: operational
+    description: The decision log is published at least hourly.
+  - property: retention
+    value: 2555
+    unit: d
+    element: credit_risk_decisions.decision_timestamp
+    driver: auditability
+    description: Decision records are retained for seven years in this reference policy.
+
+roles:
+  - role: risk-decision-auditor
+    access: read
+    firstLevelApprovers: credit-risk-owner
+    secondLevelApprovers: compliance-owner
+  - role: decision-platform-engineer
+    access: write
+    firstLevelApprovers: credit-risk-owner
+
+support:
+  - channel: risk-contracts@example.com
+    tool: email
+    scope: issues
+    url: mailto:risk-contracts@example.com
+
+tags: [credit-risk, regulated-ai, explainability, human-oversight, odcs-3-2]
+
+customProperties:
+  - property: governanceTier
+    value: high-impact-decision
+    vendor: vektoria
+  - property: sourceContractId
+    value: urn:odcs:data-platform:customer-behavior-features
+    vendor: vektoria
+  - property: sourceContractVersion
+    value: 1.0.0
+    vendor: vektoria
+  - property: syntheticDataOnly
+    value: true
+    vendor: vektoria
