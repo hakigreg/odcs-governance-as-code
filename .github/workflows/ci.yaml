@@ -15,7 +15,7 @@ concurrency:
 jobs:
   quality-gates:
     name: Static and contract gates
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out repository
@@ -35,7 +35,7 @@ jobs:
   runtime-contracts:
     name: Runtime contract scenarios
     needs: quality-gates
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Check out repository
