@@ -1,5 +1,12 @@
 # Trusted Data Contracts
 
+[![Contract CI](https://github.com/hakigreg/odcs-governance-as-code/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/hakigreg/odcs-governance-as-code/actions/workflows/ci.yaml)
+![ODCS](https://img.shields.io/badge/ODCS-3.2.0-0052CC)
+![Data Contract CLI](https://img.shields.io/badge/Data%20Contract%20CLI-1.2.5-4B32C3)
+![Python](https://img.shields.io/badge/Python-3.11--3.12-3776AB?logo=python&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Governance-as-code reference implementation for regulated analytics and AI,
 built with Open Data Contract Standard (ODCS) v3.2.0.
 
