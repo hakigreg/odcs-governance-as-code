@@ -3,7 +3,7 @@
 This guide presents the project in roughly ten minutes from a clean checkout.
 All commands run from the repository root and use only Docker, Compose, and Make.
 
-## 1. Build the reproducible environment
+## 1. Build the containerized tooling environment
 
 ```bash
 make bootstrap

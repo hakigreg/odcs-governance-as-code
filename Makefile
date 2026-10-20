@@ -5,7 +5,7 @@
 help: ## Show the available commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Available commands:\n"} /^[a-zA-Z_-]+:.*## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-bootstrap: ## Build the reproducible Python tooling image
+bootstrap: ## Build the containerized Python tooling environment
 	docker compose build tooling
 
 up: ## Start PostgreSQL and wait until it is healthy
